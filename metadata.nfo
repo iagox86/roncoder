@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+    <title>TITLE</title>
+    <sorttitle>NN - TITLE</sorttitle>
+    <plot>SNIPPIT</plot>
+    <genre>Magic</genre>
+    <premiered>YEAR</premiered>
+    <director>NAME</director>
+    <writer>NAME</writer>
+    <actor>
+        <name>NAME</name>
+        <role>NAME</role>
+        <thumb>THUMBNAIL.jpg</thumb>
+    </actor>
+</movie>
