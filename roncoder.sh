@@ -99,7 +99,7 @@ for i in $TITLES; do
   if [ "$RIP_THUMBNAIL" = "true" ]; then
     echo "Ripping thumbnail from $VIDEO_FILE to $THUMBNAIL_FILE @ offset $THUMBNAIL_OFFSET"
 
-    ffmpeg -y -ss $THUMBNAIL_OFFSET -i "$VIDEO_DIR/$i.mp4" -frames:v 1 -q:v 2 "$THUMBNAIL_FILE"
+    $SCRIPT_DIR/thumbnailer "$VIDEO_DIR/$i.mp4" "$THUMBNAIL_FILE" "$THUMBNAIL_OFFSET"
   fi
   echo
 done
