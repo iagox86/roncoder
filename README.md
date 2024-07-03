@@ -30,7 +30,7 @@ I suggest working from the `working/` directory, which should be in
 `.gitignore` To rip a DVD, I like to put them all into a folder called
 `working/originals/`:
 
-```bash
+```
 mkdir -p working/originals/
 sudo dd if=/dev/sr0 of="working/originals/VERNON_REVELATIONS_1_2.iso"
 ```
@@ -41,7 +41,7 @@ That'll take awhile (~10 minutes for my drive). :)
 
 I use `lsdvd` to get titles:
 
-```sh
+```
 $ lsdvd originals/Dai\ Vernon\ Revalations\ -\ Volumes\ 1+2.iso 
 libdvdread: Encrypted DVD support unavailable.
 libdvdread: Zero check failed in src/ifo_read.c:567 for vmgi_mat->zero_3 : 0x00000000010000000000000000000000000000
@@ -60,7 +60,7 @@ Still working in `working/`, run `../roncoder.sh` and start figuring out
 settings! All settings are passed via environmental variables and have fairly
 good defaults (I hope!):
 
-```sh
+```
 Source:
 * DVD = /dev/sr0
 * Mount dir (MOUNT) = /mnt/dvd
@@ -74,7 +74,7 @@ Press <enter> to confirm...
 
 You will likely want to set DVD to your disk:
 
-```sh
+```
 Source:
 * DVD = originals/VERNON_REVELATIONS_1_2.iso
 * Mount dir (MOUNT) = /mnt/dvd
@@ -88,7 +88,7 @@ Press <enter> to confirm...
 
 The rest of the settings should be fine, so hit enter:
 
-```sh
+```
 Video settings (RIP_VIDEO=true / RIP_VIDEO=false to toggle):
 * Rip the DVD = ENABLED
 * Result file (RESULT_FILE) = ./output.txt
@@ -163,7 +163,7 @@ except with `.txt` extensions. Put the titles in those files.
 
 It'll look something like this:
 
-```bash
+```
 $ ls *
 thumbnails:
 10.jpg  12.jpg  14.jpg  16.jpg  18.jpg  1.jpg   21.jpg  2.jpg  4.jpg  6.jpg  8.jpg
