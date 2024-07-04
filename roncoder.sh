@@ -95,7 +95,7 @@ if [ "$RIP_VIDEO" = "true" ]; then
     echo "* Preview frames (PREVIEW_START + PREVIEW_END) = $PREVIEW_START - $PREVIEW_END"
   fi
 
-  if [ "$PREVIEW" = "true" && "$SPLIT_CHAPTERS" = "true" ]]; then
+  if [[ "$PREVIEW" = "true" && "$SPLIT_CHAPTERS" = "true" ]]; then
     err "Unfortunately, PREVIEW and SPLIT_CHAPTERS are not compatible!"
   fi
 else
