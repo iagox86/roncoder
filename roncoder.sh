@@ -121,8 +121,8 @@ echo
 echo "(Press <enter> if that looks right)"
 read
 
-mkdir -p $VIDEO_DIR
-mkdir -p $THUMBNAIL_DIR
+mkdir -p "$VIDEO_DIR"
+mkdir -p "$THUMBNAIL_DIR"
 rm -f "$RESULT_FILE"
 
 for TITLE in $TITLES; do
