@@ -36,11 +36,18 @@ if [ -z ${LOOP+x} ]; then
   fi
 fi
 
+VIDEO_DIR=${VIDEO_DIR:-$PWD/videos}
+echo "* Video output (or thumbnail source) directory: $VIDEO_DIR"
+if [ -z ${TITLES+x} ]; then
+  TITLES=$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep '^Title' | sed -r 's/^Title: ([0-9]*),.*/\1/' | cut -d\  -f2 | tail -n1))
+fi
+echo "* Titles (TITLES) = $TITLES"
+
 echo
 echo "(Will attempt to create the mount dir, if needed, then mount the disc)"
 echo
 echo "Press <enter> to confirm..."
-read
+#read
 
 # Create the directory then mount it
 sudo mkdir -p "$MOUNT"
@@ -60,9 +67,6 @@ if [ "$RIP_VIDEO" = "true" ]; then
   PRESETS_FILE=${PRESETS_FILE:-"$SCRIPT_DIR/presets.json"}
   echo "* Presets file (PRESETS_FILE) = $PRESETS_FILE"
 
-  VIDEO_DIR=${VIDEO_DIR:-$PWD/videos}
-  echo "* Video output directory: $VIDEO_DIR"
-
   QUALITY=${QUALITY:-19}
   echo -e "* Quality (QUALITY) = \e[34m$QUALITY\e[0m"
 
@@ -75,10 +79,6 @@ if [ "$RIP_VIDEO" = "true" ]; then
   SPLIT_CHAPTERS=${SPLIT_CHAPTERS:-false}
   echo "* Split chapters (SPLIT_CHAPTERS) = $SPLIT_CHAPTERS"
 
-  if [ -z ${TITLES+x} ]; then
-    TITLES=$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep '^Title' | sed -r 's/^Title: ([0-9]*),.*/\1/' | cut -d\  -f2 | tail -n1))
-  fi
-  echo "* Titles (TITLES) = $TITLES"
 
   PREVIEW=${PREVIEW:-true}
   FRAMES=''
@@ -119,19 +119,18 @@ fi
 
 echo
 echo "(Press <enter> if that looks right)"
-read
+#read
 
 mkdir -p "$VIDEO_DIR"
 mkdir -p "$THUMBNAIL_DIR"
-rm -f "$RESULT_FILE"
 
 for TITLE in $TITLES; do
   if [ "$SPLIT_CHAPTERS" = "true" ]; then
-    CHAPTERS=$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep -E "^Title: 0*$TITLE," | grep -Eo 'Chapters: [0-9]*' | cut -d\  -f2))
+    TITLE_CHAPTERS=${CHAPTERS:-$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep -E "^Title: 0*$TITLE," | grep -Eo 'Chapters: [0-9]*' | cut -d\  -f2))}
   fi
 
   if [ "$SPLIT_CHAPTERS" = "true" ]; then
-    for CHAPTER in $CHAPTERS; do
+    for CHAPTER in $TITLE_CHAPTERS; do
       VIDEO_FILE="$VIDEO_DIR/$TITLE-$CHAPTER.mp4"
 
       if [ "$RIP_VIDEO" = "true" ]; then

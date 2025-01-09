@@ -31,21 +31,21 @@ mkdir -p completed
 for video in videos/*; do
   basename=$(basename "$video" .mp4)
   title=$(cat "titles/$basename.txt" | sed 's/:/ -/g')
-  thumbnail="thumbnails/$basename.jpg"
+  thumbnail="thumbnails/$basename.png"
   metadata="metadata.nfo"
   number=$(printf "%02d" $basename)
   full_name="$number - $title"
   outfile="completed/$full_name"
 
   sed -e "s/NN/$number/g" -e "s/TITLE/$title/g" $metadata > "$outfile.nfo"
-  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile.jpg"
-  magick "$thumbnail" -resize $FANART_SIZE -background none -gravity center -extent $FANART_SIZE "$outfile-fanart.jpg"
+  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile.png"
+  magick "$thumbnail" -resize $FANART_SIZE -background none -gravity center -extent $FANART_SIZE "$outfile-fanart.png"
 
-  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile-logo.jpg"
+  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile-logo.png"
 
   cp -v "$video" "$outfile.mp4"
 
   # If I need to embed metadata:
-  # ffmpeg -i "$video" -i "$thumbnail" -map 0 -map 1 -c copy -c:v:1 jpg -disposition:v:1 attached_pic -metadata title="$full_name" completed/"$outfile".mp4; end
+  # ffmpeg -i "$video" -i "$thumbnail" -map 0 -map 1 -c copy -c:v:1 png -disposition:v:1 attached_pic -metadata title="$full_name" completed/"$outfile".mp4; end
 done
 
