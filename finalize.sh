@@ -31,17 +31,17 @@ mkdir -p completed
 for video in videos/*; do
   basename=$(basename "$video" .mp4)
   title=$(cat "titles/$basename.txt" | sed 's/:/ -/g')
-  thumbnail="thumbnails/$basename.png"
+  thumbnail="thumbnails/$basename.jpg"
   metadata="metadata.nfo"
-  number=$(printf "%02d" $basename)
+  number=$basename #$(printf "%02d" $basename)
   full_name="$number - $title"
   outfile="completed/$full_name"
 
   sed -e "s/NN/$number/g" -e "s/TITLE/$title/g" $metadata > "$outfile.nfo"
-  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile.png"
-  magick "$thumbnail" -resize $FANART_SIZE -background none -gravity center -extent $FANART_SIZE "$outfile-fanart.png"
+  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile.jpg"
+  magick "$thumbnail" -resize $FANART_SIZE -background none -gravity center -extent $FANART_SIZE "$outfile-fanart.jpg"
 
-  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile-logo.png"
+  magick "$thumbnail" -resize $POSTER_SIZE -background none -gravity center -extent $POSTER_SIZE "$outfile-logo.jpg"
 
   cp -v "$video" "$outfile.mp4"
 

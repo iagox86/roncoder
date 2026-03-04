@@ -37,6 +37,7 @@ if [ -z ${LOOP+x} ]; then
 fi
 
 VIDEO_DIR=${VIDEO_DIR:-$PWD/videos}
+mkdir -p "$VIDEO_DIR"
 echo "* Video output (or thumbnail source) directory: $VIDEO_DIR"
 if [ -z ${TITLES+x} ]; then
   TITLES=$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep '^Title' | sed -r 's/^Title: ([0-9]*),.*/\1/' | cut -d\  -f2 | tail -n1))
@@ -50,10 +51,12 @@ echo "Press <enter> to confirm..."
 #read
 
 # Create the directory then mount it
+echo "Creating $MOUNT if needed (requires sudo)..."
 sudo mkdir -p "$MOUNT"
 sudo umount "$MOUNT" || true
 
-sudo mount "$DVD" "$MOUNT" -o uid=ron $LOOP || err "Couldn't mount the DVD!"
+echo "Mounting $DVD to $MOUNT (requires sudo)..."
+# sudo mount "$DVD" "$MOUNT" -o uid=ron $LOOP || err "Couldn't mount the DVD!"
 
 echo
 echo "Video settings (RIP_VIDEO=true / RIP_VIDEO=false to toggle)":
@@ -109,6 +112,7 @@ if [ "$RIP_THUMBNAIL" = "true" ]; then
   echo -e '* Rip the thumbnail = \e[32m\e[1mENABLED\e[0m'
 
   THUMBNAIL_DIR=${THUMBNAIL_DIR:-$PWD/thumbnails}
+  mkdir -p "$THUMBNAIL_DIR"
   THUMBNAIL_OFFSET=${THUMBNAIL_OFFSET:-3}
 
   echo "* Output dir (THUMBNAIL_DIR) = $THUMBNAIL_DIR"
@@ -121,9 +125,6 @@ echo
 echo "(Press <enter> if that looks right)"
 #read
 
-mkdir -p "$VIDEO_DIR"
-mkdir -p "$THUMBNAIL_DIR"
-
 for TITLE in $TITLES; do
   if [ "$SPLIT_CHAPTERS" = "true" ]; then
     TITLE_CHAPTERS=${CHAPTERS:-$(seq -s ' ' 1 $(lsdvd "$DVD" 2>/dev/null | grep -E "^Title: 0*$TITLE," | grep -Eo 'Chapters: [0-9]*' | cut -d\  -f2))}
@@ -131,7 +132,8 @@ for TITLE in $TITLES; do
 
   if [ "$SPLIT_CHAPTERS" = "true" ]; then
     for CHAPTER in $TITLE_CHAPTERS; do
-      VIDEO_FILE="$VIDEO_DIR/$TITLE-$CHAPTER.mp4"
+      BASE_FILENAME=$(printf "%02d-%02d" $TITLE $CHAPTER)
+      VIDEO_FILE="$VIDEO_DIR/$BASE_FILENAME.mp4"
 
       if [ "$RIP_VIDEO" = "true" ]; then
         echo "Ripping title $TITLE chapter $CHAPTER to $VIDEO_FILE..."
@@ -143,17 +145,18 @@ for TITLE in $TITLES; do
           --quality "$QUALITY" \
           --crop-mode custom \
           --crop $CROP_TOP:$CROP_BOTTOM:$CROP_LEFT:$CROP_RIGHT \
-          -i "$RIP_DIR" \
+          -i "$DVD" \
           --aencoder copy:aac \
           -t "$TITLE" \
           -c "$CHAPTER" \
           -o "$VIDEO_FILE"
+          #-i "$RIP_DIR" \
 
-        mediainfo "$VIDEO_FILE" | grep '^Bit rate   ' | head -n1 | sed "s/^/$TITLE-$CHAPTER => /" | tee -a $RESULT_FILE
+        mediainfo "$VIDEO_FILE" | grep '^Bit rate   ' | head -n1 | sed "s/^/$BASE_FILENAME => /" | tee -a $RESULT_FILE
       fi
 
       if [ "$RIP_THUMBNAIL" = "true" ]; then
-        THUMBNAIL_FILE="$THUMBNAIL_DIR/$TITLE-$CHAPTER.jpg"
+        THUMBNAIL_FILE="$THUMBNAIL_DIR/$BASE_FILENAME.jpg"
         echo "Creating thumbnail from $VIDEO_FILE to $THUMBNAIL_FILE @ $THUMBNAIL_OFFSET seconds"
 
         ffmpeg -y -ss $THUMBNAIL_OFFSET -i "$VIDEO_FILE" -frames:v 1 -q:v 2 "$THUMBNAIL_FILE"
