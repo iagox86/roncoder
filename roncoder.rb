@@ -8,6 +8,26 @@ using Rainbow
 SCRIPT_DIR = File.dirname(File.expand_path(__FILE__))
 FAILED_RIPS = []
 
+REQUIRED_BINARIES = %w[lsdvd mediainfo magick ffmpeg flatpak].freeze
+REQUIRED_FLATPAK_APPS = %w[fr.handbrake.ghb].freeze
+
+def binary_available?(name)
+  system("command -v #{ name } > /dev/null 2>&1")
+end
+
+def flatpak_app_available?(app_id)
+  `flatpak list --app --columns=application 2>/dev/null`.split("\n").include?(app_id)
+end
+
+missing_binaries = REQUIRED_BINARIES.reject { |bin| binary_available?(bin) }
+missing_apps = REQUIRED_FLATPAK_APPS.reject { |app| flatpak_app_available?(app) }
+
+unless missing_binaries.empty? && missing_apps.empty?
+  missing_binaries.each { |bin| puts "Missing required binary: #{ bin }".red }
+  missing_apps.each { |app| puts "Missing required flatpak app: #{ app } (try: flatpak install #{ app })".red }
+  exit 1
+end
+
 if File.exist?('roncoder.json')
   CONFIG = ::JSON.parse(File.read('roncoder.json'))
 else
