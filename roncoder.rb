@@ -31,7 +31,7 @@ else
       'rip_thumbnail' => true,
       'manual_thumbnail' => nil,
       # 'rip_video' => 'auto', # Not sure how/if I should handle this...
-      'thumbnail_offset' => "3000ms",
+      'thumbnail_offset' => '3000ms',
       'thumbnail_preview' => true,
       'thumbnail_poster_size' => '1000x1500',
       'thumbnail_fanart_size' => '1920x1080',
@@ -76,16 +76,16 @@ def log(text = '', display: true)
   end
 
   f = File.new(CONFIG['log_file'], 'a')
-  f.puts("#{ DateTime.now.to_s } #{ text }")
+  f.puts("#{ DateTime.now } #{ text }")
   f.close
 end
 
-if !File.exist?(CONFIG['handbrake_config'])
+unless File.exist?(CONFIG['handbrake_config'])
   log "Missing handbrake config: #{ CONFIG['handbrake_config'] }".red
   exit 1
 end
 
-if !File.exist?(CONFIG['dvd'])
+unless File.exist?(CONFIG['dvd'])
   log "Missing DVD file: #{ CONFIG['dvd'] }".red
   exit 1
 end
@@ -115,12 +115,12 @@ if CONFIG['titles'].nil? || CONFIG['titles'].empty?
   title_output = `lsdvd #{ CONFIG['dvd'] } 2>/dev/null`
 
   if title_output.nil? || title_output.empty?
-    log "Failed to run lsdvd!".red
+    log 'Failed to run lsdvd!'.red
     exit 1
   end
 
   title_output.split(/\r?\n/).each do |l|
-    log("lsdvd line: #{ l.to_s }", display: false)
+    log("lsdvd line: #{ l }", display: false)
     if l =~ /^Title: ([0-9]+),.*Length: ([0-9:.]+).*Chapters: ([0-9]+),/
       title = Regexp.last_match(1).to_i
       length = Regexp.last_match(2)
@@ -134,12 +134,12 @@ if CONFIG['titles'].nil? || CONFIG['titles'].empty?
 
         1.upto(chapters) do |c|
           CONFIG['titles'][title]['chapters'][c] = {
-            'title' => "Title %02d chapter %02d" % [title, c],
+            'title' => 'Title %02d chapter %02d' % [title, c],
           }
         end
       else
         CONFIG['titles'][title] = {
-          'title' => "Title %02d" % [title],
+          'title' => 'Title %02d' % [title],
           'length' => length,
         }
       end
@@ -147,7 +147,7 @@ if CONFIG['titles'].nil? || CONFIG['titles'].empty?
   end
 
   puts "Configured the chapters/titles - have a look to make sure it's okay!".green
-  puts "NOTE: chapters/titles can override the global_config!".green
+  puts 'NOTE: chapters/titles can override the global_config!'.green
   File.write('roncoder.json', JSON.pretty_generate(CONFIG))
   exit
 end
@@ -163,7 +163,7 @@ def rip_video(config, title, chapter = nil)
   end
 
   log "Ripping: #{ outfile }.....".green
-  system(<<~EOF
+  system(<<~FLATPAK
     flatpak run --command=HandBrakeCLI fr.handbrake.ghb \
       --json \
       --preset-import-file "#{ CONFIG['handbrake_config'] }" \
@@ -176,8 +176,8 @@ def rip_video(config, title, chapter = nil)
       -t "#{ title }" \
       #{ chapter.nil? ? '' : "-c \"#{ chapter }\"" } \
       -o "#{ outfile }"
-    EOF
-  )
+  FLATPAK
+        )
 
   if File.exist?(outfile)
     log "Done @ #{ outfile }".green
@@ -195,7 +195,7 @@ end
 
 def get_bit_rate(file)
   `mediainfo "#{ file }"`.split(/\r?\n/).each do |line|
-    if line =~ /^Bit rate    [ ]+: ([0-9]+ [0-9]*) ?kb/
+    if line =~ /^Bit rate     +: ([0-9]+ [0-9]*) ?kb/
       return Regexp.last_match(1).gsub(/ /, '').to_i
     end
   end
@@ -205,7 +205,7 @@ end
 
 def get_duration(file)
   `mediainfo "#{ file }"`.split(/\r?\n/).each do |line|
-    if line =~ /^Duration    [ ]+: (.*)/
+    if line =~ /^Duration     +: (.*)/
       return Regexp.last_match(1).gsub(/ /, '')
     end
   end
@@ -227,7 +227,7 @@ def rip_video_with_bitrate_target(config, title, chapter)
     end
 
     if bit_rate < config['min_bit_rate']
-      log "Bitrate is too low: #{ bit_rate}".cyan
+      log "Bitrate is too low: #{ bit_rate }".cyan
 
       if config['quality'] <= config['min_quality']
         log "Bitrate is too log, but we've done all we can do!".red
@@ -240,7 +240,7 @@ def rip_video_with_bitrate_target(config, title, chapter)
         return nil
       end
     elsif bit_rate > config['max_bit_rate']
-      log "Bitrate is too high: #{ bit_rate}".cyan
+      log "Bitrate is too high: #{ bit_rate }".cyan
 
       if config['quality'] >= config['max_quality']
         log "Bitrate is too high, but we've done all we can do!".red
@@ -353,10 +353,12 @@ end
 
 def get_tmp_filename(title:, chapter:, config:)
   if chapter.nil?
-    outfile = File.join(CONFIG['tmp_dir'], "%02d.%d.%d:%d:%d:%d.mp4" % [title, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
+    outfile = File.join(CONFIG['tmp_dir'], '%02d.%d.%d:%d:%d:%d.mp4' % [title, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
   else
-    outfile = File.join(CONFIG['tmp_dir'], "%02d-%02d.%d.%d:%d:%d:%d.mp4" % [title, chapter, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
+    outfile = File.join(CONFIG['tmp_dir'], '%02d-%02d.%d.%d:%d:%d:%d.mp4' % [title, chapter, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
   end
+
+  return outfile
 end
 
 def do_rip(title:, chapter:, config:, updateable_config:)
@@ -367,17 +369,17 @@ def do_rip(title:, chapter:, config:, updateable_config:)
   updateable_config['info']['tmp_file']
 
   if config['auto_quality']
-    log("Ripping with automatic quality")
+    log('Ripping with automatic quality')
     outfile, quality = rip_video_with_bitrate_target(config, title&.to_i, chapter&.to_i)
     updateable_config['quality'] = quality || config['quality']
     log("Ripped into #{ outfile } @ quality #{ quality }")
   else
-    log("Ripping with configured quality")
+    log('Ripping with configured quality')
     outfile = rip_video(config, title&.to_i, chapter&.to_i)
   end
 
   if outfile.nil?
-    log "Rip failed!".red
+    log 'Rip failed!'.red
     return
   end
 
@@ -385,9 +387,9 @@ def do_rip(title:, chapter:, config:, updateable_config:)
   updateable_config['info']['duration'] = get_duration(outfile)
 
   if chapter.nil?
-    base_filename = "%02d %s" % [title, config['title']]
+    base_filename = '%02d %s' % [title, config['title']]
   else
-    base_filename = "%02d-%02d %s" % [title, chapter, config['title']]
+    base_filename = '%02d-%02d %s' % [title, chapter, config['title']]
   end
 
   log("Base filename: #{ base_filename }")
@@ -399,13 +401,12 @@ end
 
 begin
   CONFIG['titles'].each_pair do |title, title_config|
-    outfile = nil
     if CONFIG['split_chapters']
       title_config['chapters'].each_pair do |chapter, chapter_config|
         # Ensure no stale config is around
         config = JSON.parse(CONFIG['global_config'].to_json)
-          .merge(title_config.compact)
-          .merge(chapter_config.compact)
+                     .merge(title_config.compact)
+                     .merge(chapter_config.compact)
 
         do_rip(
           title: title,
@@ -434,7 +435,7 @@ begin
   FileUtils.cp(CONFIG['folder_thumbnail'], File.join(CONFIG['out_dir'], "folder#{ File.extname(CONFIG['folder_thumbnail']) }"), verbose: true)
 
   unless FAILED_RIPS.empty?
-    log "The following titles/chapters failed to rip:".red
+    log 'The following titles/chapters failed to rip:'.red
     log FAILED_RIPS.to_s.red
   end
 ensure
@@ -442,7 +443,7 @@ ensure
 end
 
 puts
-puts "All done?".green
+puts 'All done?'.green
 puts
 if CONFIG['title']
   puts "rsync -rv out/ ron@home:/data/external/media/videos/Magic/Lectures/'#{ CONFIG['title'] }'/".green
