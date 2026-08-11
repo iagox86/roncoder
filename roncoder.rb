@@ -3,10 +3,61 @@ require 'json'
 require 'fileutils'
 require 'tempfile'
 require 'rainbow/refinement'
+require 'optimist'
 
 using Rainbow
 SCRIPT_DIR = File.dirname(File.expand_path(__FILE__))
 FAILED_RIPS = []
+
+# Write-then-rename so a killed/interrupted process can never leave
+# roncoder.json truncated or half-written -- the rename is atomic, so the
+# file on disk is always either the old complete version or the new one.
+def atomic_write(path, content)
+  tmp_path = "#{ path }.tmp.#{ Process.pid }"
+  File.write(tmp_path, content)
+  File.rename(tmp_path, path)
+end
+
+OPTS = Optimist.options do
+  banner "Usage: #{ $PROGRAM_NAME } [options] <media file or folder>"
+  opt :dry_run, 'Validate configuration and discover titles/chapters, but never rip video/thumbnails', default: false
+end
+
+if ARGV.length > 1
+  Optimist.die 'Too many arguments'
+end
+
+MEDIA_PATH = if ARGV.empty?
+  puts "What's the full path to the ISO, drive (like /dev/sr0), or a folder containing exactly one .iso?"
+  input = $stdin.gets&.chomp
+  input.nil? || input.empty? ? '/dev/sr0' : input
+else
+  ARGV[0]
+end
+
+# Contain all work (roncoder.json, tmp/out dirs, etc) to the folder that
+# holds the media: for a folder argument, that's the folder itself (which
+# must hold exactly one .iso); for a regular file (an .iso), that's the
+# folder containing it. A drive device (like /dev/sr0) has no meaningful
+# containing folder, so work stays in whatever folder we were invoked from.
+if File.directory?(MEDIA_PATH)
+  Dir.chdir(File.expand_path(MEDIA_PATH))
+
+  isos = Dir.glob('*.iso')
+  if isos.length != 1
+    puts "Expected exactly one .iso file in #{ MEDIA_PATH }, found #{ isos.length }".red
+    exit 1
+  end
+
+  DVD_FILE = isos.first
+elsif File.file?(MEDIA_PATH)
+  expanded = File.expand_path(MEDIA_PATH)
+  Dir.chdir(File.dirname(expanded))
+
+  DVD_FILE = File.basename(expanded)
+else
+  DVD_FILE = MEDIA_PATH
+end
 
 REQUIRED_BINARIES = %w[lsdvd mediainfo magick ffmpeg flatpak].freeze
 REQUIRED_FLATPAK_APPS = %w[fr.handbrake.ghb].freeze
@@ -32,7 +83,7 @@ if File.exist?('roncoder.json')
   CONFIG = ::JSON.parse(File.read('roncoder.json'))
 else
   CONFIG = {
-    'title' => nil,
+    'title' => File.basename(DVD_FILE, '.iso'),
     'dvd' => nil,
     'handbrake_config' => File.join(SCRIPT_DIR, 'presets.json'),
     'tmp_dir' => './tmp',
@@ -58,7 +109,7 @@ else
       'metadata' => {
         'year' => 0,
         'plot' => '',
-        'genre' => 'Magic',
+        'genre' => '',
         'director' => '',
         'writer' => '',
         'actor' => [
@@ -66,6 +117,7 @@ else
           'role' => 'Self',
         ],
       },
+      'crop_mode' => 'auto',
       'crop' => {
         'top' => 0,
         'bottom' => 0,
@@ -75,15 +127,10 @@ else
     }
   }
 
-  puts "What's the full path to the ISO or drive (like /dev/sr0)?"
-  CONFIG['dvd'] = $stdin.gets&.chomp
-  if CONFIG['dvd'].nil? || CONFIG['dvd'].empty?
-    CONFIG['dvd'] = '/dev/sr0'
-  end
+  CONFIG['dvd'] = DVD_FILE
 
-  File.write('roncoder.json', JSON.pretty_generate(CONFIG))
-  puts "Wrote default 'roncoder.json', edit it and run again!".green
-  exit
+  puts "No 'roncoder.json' found; creating one with a placeholder title of #{ CONFIG['title'].inspect }.".green
+  atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
 end
 
 def log(text = '', display: true)
@@ -110,29 +157,31 @@ unless File.exist?(CONFIG['dvd'])
   exit 1
 end
 
-# Keep the temp dir
-FileUtils.mkdir_p(CONFIG['tmp_dir'], verbose: true)
+unless OPTS[:dry_run]
+  # Keep the temp dir
+  FileUtils.mkdir_p(CONFIG['tmp_dir'], verbose: true)
 
-# Delete the out_dir if it exists
-if CONFIG['out_dir'].nil? || CONFIG['out_dir'].empty?
-  log 'Missing out_dir config!'.red
-  exit 1
-end
-FileUtils.rm_rf(CONFIG['out_dir'], verbose: true)
-FileUtils.mkdir_p(CONFIG['out_dir'], verbose: true)
+  # Delete the out_dir if it exists
+  if CONFIG['out_dir'].nil? || CONFIG['out_dir'].empty?
+    log 'Missing out_dir config!'.red
+    exit 1
+  end
+  FileUtils.rm_rf(CONFIG['out_dir'], verbose: true)
+  FileUtils.mkdir_p(CONFIG['out_dir'], verbose: true)
 
-# Delete the thumbnail_tmp_dir if it exists
-if CONFIG['thumbnail_tmp_dir'].nil? || CONFIG['thumbnail_tmp_dir'].empty?
-  log 'Missing thumbnail_tmp_dir config!'.red
-  exit 1
+  # Delete the thumbnail_tmp_dir if it exists
+  if CONFIG['thumbnail_tmp_dir'].nil? || CONFIG['thumbnail_tmp_dir'].empty?
+    log 'Missing thumbnail_tmp_dir config!'.red
+    exit 1
+  end
+  FileUtils.rm_rf(CONFIG['thumbnail_tmp_dir'], verbose: true)
+  FileUtils.mkdir_p(CONFIG['thumbnail_tmp_dir'], verbose: true)
 end
-FileUtils.rm_rf(CONFIG['thumbnail_tmp_dir'], verbose: true)
-FileUtils.mkdir_p(CONFIG['thumbnail_tmp_dir'], verbose: true)
 
 if CONFIG['titles'].nil? || CONFIG['titles'].empty?
   CONFIG['titles'] ||= {}
 
-  title_output = `lsdvd #{ CONFIG['dvd'] } 2>/dev/null`
+  title_output = `lsdvd \"#{ CONFIG['dvd'] }\" 2>/dev/null`
 
   if title_output.nil? || title_output.empty?
     log 'Failed to run lsdvd!'.red
@@ -168,8 +217,20 @@ if CONFIG['titles'].nil? || CONFIG['titles'].empty?
 
   puts "Configured the chapters/titles - have a look to make sure it's okay!".green
   puts 'NOTE: chapters/titles can override the global_config!'.green
-  File.write('roncoder.json', JSON.pretty_generate(CONFIG))
+  atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
   exit
+end
+
+def crop_args(config)
+  # Missing crop_mode means this config predates the field entirely, back
+  # when --crop-mode custom was the only behavior -- default to custom (not
+  # auto) so old configs keep their original crop values and tmp/ cache
+  # instead of silently switching modes underneath them.
+  if config['crop_mode'] == 'auto'
+    '--crop-mode auto'
+  else
+    "--crop-mode custom --crop #{ config['crop']['top'] }:#{ config['crop']['bottom'] }:#{ config['crop']['left'] }:#{ config['crop']['right'] }"
+  end
 end
 
 def rip_video(config, title, chapter = nil)
@@ -177,7 +238,7 @@ def rip_video(config, title, chapter = nil)
   outfile = get_tmp_filename(title: title, chapter: chapter, config: config)
   log("...into outfile #{ outfile }".green)
 
-  if File.exist?(outfile)
+  if File.exist?(outfile) && get_duration(outfile) != -1
     log "Already ripped; skipping: #{ outfile }".cyan
     return outfile
   end
@@ -189,8 +250,7 @@ def rip_video(config, title, chapter = nil)
       --preset-import-file "#{ CONFIG['handbrake_config'] }" \
       --preset Ron \
       --quality "#{ config['quality'] }" \
-      --crop-mode custom \
-      --crop #{ config['crop']['top'] }:#{ config['crop']['bottom'] }:#{ config['crop']['left'] }:#{ config['crop']['right'] } \
+      #{ crop_args(config) } \
       -i "#{ CONFIG['dvd'] }" \
       --aencoder copy:aac \
       -t "#{ title }" \
@@ -214,8 +274,11 @@ def rip_video(config, title, chapter = nil)
 end
 
 def get_bit_rate(file)
+  # mediainfo reports space-grouped thousands for normal clips ("1 849
+  # kb/s") but switches to a decimal fraction for very short/low-bitrate
+  # ones ("11.9 kb/s") -- match both.
   `mediainfo "#{ file }"`.split(/\r?\n/).each do |line|
-    if line =~ /^Bit rate     +: ([0-9]+ [0-9]*) ?kb/
+    if line =~ /^Bit rate     +: ([0-9]+(?:\.[0-9]+)?(?: [0-9]+)*) ?kb/
       return Regexp.last_match(1).gsub(/ /, '').to_i
     end
   end
@@ -242,8 +305,10 @@ def rip_video_with_bitrate_target(config, title, chapter)
   loop do
     bit_rate = get_bit_rate(outfile)
     if bit_rate == -1
-      log "Failed to get bitrate for #{ outfile }!".red
-      exit 1
+      # Don't abort the whole run over one file mediainfo can't parse (e.g.
+      # a genuinely tiny/degenerate chapter) -- accept it as-is and move on.
+      log "Failed to get bitrate for #{ outfile }! Accepting as-is.".red
+      return outfile, config['quality']
     end
 
     if bit_rate < config['min_bit_rate']
@@ -343,7 +408,7 @@ def do_nfo(config, base_filename)
     nfo << "  <sorttitle>#{ base_filename }</sorttitle>"
   end
 
-  %w[plot genre year director writer].each do |key|
+  %w[plot genre year premiered director writer].each do |key|
     if config['metadata'][key] && (!config['metadata'][key].is_a?(String) || !config['metadata'][key].empty?)
       if config['metadata'][key].is_a?(String) && config['metadata'][key].include?("\n")
         nfo << "  <#{ key }><![CDATA[#{ config['metadata'][key] }]]></#{ key }>"
@@ -371,14 +436,37 @@ def do_nfo(config, base_filename)
   File.write(nfo_file, nfo.join("\n"))
 end
 
+def crop_cache_key(config)
+  # Same default as crop_args -- missing crop_mode means custom, not auto.
+  if config['crop_mode'] == 'auto'
+    'auto'
+  else
+    '%d:%d:%d:%d' % [config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']]
+  end
+end
+
 def get_tmp_filename(title:, chapter:, config:)
   if chapter.nil?
-    outfile = File.join(CONFIG['tmp_dir'], '%02d.%d.%d:%d:%d:%d.mp4' % [title, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
+    outfile = File.join(CONFIG['tmp_dir'], '%02d.%d.%s.mp4' % [title, config['quality'], crop_cache_key(config)])
   else
-    outfile = File.join(CONFIG['tmp_dir'], '%02d-%02d.%d.%d:%d:%d:%d.mp4' % [title, chapter, config['quality'], config['crop']['top'], config['crop']['bottom'], config['crop']['left'], config['crop']['right']])
+    outfile = File.join(CONFIG['tmp_dir'], '%02d-%02d.%d.%s.mp4' % [title, chapter, config['quality'], crop_cache_key(config)])
   end
 
   return outfile
+end
+
+def describe_rip(title:, chapter:, config:)
+  outfile = get_tmp_filename(title: title, chapter: chapter, config: config)
+
+  base_filename = if chapter.nil?
+    '%02d %s' % [title, config['title']]
+  else
+    '%02d-%02d %s' % [title, chapter, config['title']]
+  end
+
+  puts "Title #{ title } chapter #{ chapter || 'n/a' }: quality #{ config['quality'] }, #{ crop_args(config) }".cyan
+  puts "  would rip into: #{ outfile }".cyan
+  puts "  would produce:  #{ File.join(CONFIG['out_dir'], "#{ base_filename }.mp4") }".cyan
 end
 
 def do_rip(title:, chapter:, config:, updateable_config:)
@@ -427,39 +515,66 @@ begin
         config = JSON.parse(CONFIG['global_config'].to_json)
                      .merge(title_config.compact)
                      .merge(chapter_config.compact)
+        # A per-title/chapter `metadata` override (e.g. just a `year`) should
+        # layer on top of the disc-wide metadata, not replace it wholesale --
+        # the outer `.merge`s above are shallow and would otherwise drop
+        # genre/director/writer/actor for any title with its own year.
+        config['metadata'] = JSON.parse(CONFIG['global_config']['metadata'].to_json)
+                                  .merge((title_config['metadata'] || {}).compact)
+                                  .merge((chapter_config['metadata'] || {}).compact)
 
-        do_rip(
-          title: title,
-          chapter: chapter,
-          config: config,
-          updateable_config: chapter_config,
-        )
-        File.write('roncoder.json', JSON.pretty_generate(CONFIG))
+        if OPTS[:dry_run]
+          describe_rip(title: title, chapter: chapter, config: config)
+        else
+          do_rip(
+            title: title,
+            chapter: chapter,
+            config: config,
+            updateable_config: chapter_config,
+          )
+          atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
+        end
       end
     else
-      do_rip(
-        title: title,
-        chapter: nil,
-        config: config,
-        updateable_config: title_config,
-      )
-      File.write('roncoder.json', JSON.pretty_generate(CONFIG))
+      config = JSON.parse(CONFIG['global_config'].to_json)
+                   .merge(title_config.compact)
+      config['metadata'] = JSON.parse(CONFIG['global_config']['metadata'].to_json)
+                                .merge((title_config['metadata'] || {}).compact)
+
+      if OPTS[:dry_run]
+        describe_rip(title: title, chapter: nil, config: config)
+      else
+        do_rip(
+          title: title,
+          chapter: nil,
+          config: config,
+          updateable_config: title_config,
+        )
+        atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
+      end
     end
   end
 
-  if CONFIG['folder_thumbnail'].nil? || CONFIG['folder_thumbnail'].empty? || !File.exist?(CONFIG['folder_thumbnail'])
-    log "Missing the folder thumbnail: #{ CONFIG['folder_thumbnail'] }".red
-    exit 1
-  end
+  if OPTS[:dry_run]
+    puts
+    puts 'Dry run complete - no video/thumbnails were ripped.'.green
+  else
+    if CONFIG['folder_thumbnail'].nil? || CONFIG['folder_thumbnail'].empty? || !File.exist?(CONFIG['folder_thumbnail'])
+      log "Missing the folder thumbnail: #{ CONFIG['folder_thumbnail'] }".red
+      exit 1
+    end
 
-  FileUtils.cp(CONFIG['folder_thumbnail'], File.join(CONFIG['out_dir'], "folder#{ File.extname(CONFIG['folder_thumbnail']) }"), verbose: true)
+    FileUtils.cp(CONFIG['folder_thumbnail'], File.join(CONFIG['out_dir'], "folder#{ File.extname(CONFIG['folder_thumbnail']) }"), verbose: true)
 
-  unless FAILED_RIPS.empty?
-    log 'The following titles/chapters failed to rip:'.red
-    log FAILED_RIPS.to_s.red
+    unless FAILED_RIPS.empty?
+      log 'The following titles/chapters failed to rip:'.red
+      log FAILED_RIPS.to_s.red
+    end
   end
 ensure
-  File.write('roncoder.json', JSON.pretty_generate(CONFIG))
+  unless OPTS[:dry_run]
+    atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
+  end
 end
 
 puts
