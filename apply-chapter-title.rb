@@ -10,8 +10,10 @@ def atomic_write(path, content)
   File.rename(tmp_path, path)
 end
 
+CONFIRMED_BY_VALUES = %w[dvd_menu title_card manual other]
+
 OPTS = Optimist.options do
-  banner "Usage: #{ $PROGRAM_NAME } --title N [--chapter N] [--name TEXT] [--sort-title TEXT] [--thumbnail-offset MS] [--year YYYY] [--premiered YYYY-MM-DD] [--note TEXT] [--force]"
+  banner "Usage: #{ $PROGRAM_NAME } --title N [--chapter N] [--name TEXT] [--sort-title TEXT] [--thumbnail-offset MS] [--year YYYY] [--premiered YYYY-MM-DD] [--note TEXT] [--confirmed-by dvd_menu|title_card|manual|other] [--force]"
   opt :title, 'Title number', type: :integer, required: true
   opt :chapter, 'Chapter number (omit for a non-split title)', type: :integer
   opt :name, 'Proposed chapter/title text (e.g. read off a title card)', type: :string
@@ -20,7 +22,13 @@ OPTS = Optimist.options do
   opt :year, 'Per-title/chapter release year override (e.g. an individual production date read off a disc menu), overriding the disc-wide metadata year for just this title/chapter', type: :integer
   opt :premiered, 'Per-title/chapter exact release date (e.g. an individual production date read off a disc menu), format YYYY-MM-DD', type: :string
   opt :note, 'Free-text note flagging something a human should double-check (not used by roncoder.rb itself, just for review tooling)', type: :string
+  opt :confirmed_by, "How --name was confirmed, for the review PDF's green confirmation column: #{ CONFIRMED_BY_VALUES.join(', ') } (not used by roncoder.rb itself)", type: :string
   opt :force, 'Overwrite even if the field looks human-edited', default: false
+end
+
+if OPTS[:confirmed_by] && !CONFIRMED_BY_VALUES.include?(OPTS[:confirmed_by])
+  puts "--confirmed-by must be one of: #{ CONFIRMED_BY_VALUES.join(', ') }".red
+  exit 1
 end
 
 unless File.exist?('roncoder.json')
@@ -67,11 +75,18 @@ if OPTS[:sort_title]
 end
 
 if OPTS[:thumbnail_offset]
+  # roncoder.rb passes this straight to `ffmpeg -ss`, which reads a bare number as *seconds* --
+  # a caller passing "3000" meaning 3000ms would silently seek to 3000 seconds instead.
+  thumbnail_offset = OPTS[:thumbnail_offset]
+  if thumbnail_offset =~ /\A\d+\z/
+    thumbnail_offset = "#{ thumbnail_offset }ms"
+  end
+
   if !OPTS[:force] && !target['thumbnail_offset'].nil?
     puts "Skipping thumbnail_offset for #{ OPTS[:title] }-#{ OPTS[:chapter] }: already set (#{ target['thumbnail_offset'].inspect }); use --force to overwrite".yellow
   else
-    target['thumbnail_offset'] = OPTS[:thumbnail_offset]
-    puts "Set thumbnail_offset for #{ OPTS[:title] }-#{ OPTS[:chapter] }: #{ OPTS[:thumbnail_offset] }".green
+    target['thumbnail_offset'] = thumbnail_offset
+    puts "Set thumbnail_offset for #{ OPTS[:title] }-#{ OPTS[:chapter] }: #{ thumbnail_offset }".green
   end
 end
 
@@ -101,6 +116,15 @@ if OPTS[:note]
   else
     target['note'] = OPTS[:note]
     puts "Set note for #{ OPTS[:title] }-#{ OPTS[:chapter] }: #{ OPTS[:note] }".green
+  end
+end
+
+if OPTS[:confirmed_by]
+  if !OPTS[:force] && !target['confirmed_by'].nil?
+    puts "Skipping confirmed_by for #{ OPTS[:title] }-#{ OPTS[:chapter] }: already set (#{ target['confirmed_by'].inspect }); use --force to overwrite".yellow
+  else
+    target['confirmed_by'] = OPTS[:confirmed_by]
+    puts "Set confirmed_by for #{ OPTS[:title] }-#{ OPTS[:chapter] }: #{ OPTS[:confirmed_by] }".green
   end
 end
 

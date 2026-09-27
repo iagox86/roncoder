@@ -17,6 +17,29 @@ def atomic_write(path, content)
   File.rename(tmp_path, path)
 end
 
+# This runs on Linux day-to-day, but output titles are transcribed straight
+# off DVD title cards (which often read like "Category: Subject") and the
+# library sometimes gets copied to non-Linux filesystems -- so keep actual
+# output filenames NTFS-safe regardless of what punctuation made it into
+# roncoder.json's title text. Only used for the filename itself; the
+# unmodified original text is still what lands in the .nfo's <title>, so
+# display fidelity (colons and all) isn't lost, just the on-disk filename.
+def sanitize_filename(str)
+  str
+    .gsub('/', '-')
+    .gsub('\\', '-')
+    .gsub(':', ' -')
+    .gsub(/[?*]/, '')
+    .gsub('"', "'")
+    .gsub('<', '(')
+    .gsub('>', ')')
+    .gsub('|', '-')
+    .gsub(/[\x00-\x1f]/, '')
+    .gsub(/\s+/, ' ')
+    .strip
+    .sub(/\.+\z/, '')
+end
+
 OPTS = Optimist.options do
   banner "Usage: #{ $PROGRAM_NAME } [options] <video file>"
   opt :dry_run, 'Validate configuration and describe splits, but never cut video/thumbnails', default: false
@@ -58,7 +81,8 @@ else
     'title' => VIDEO_NAME,
     'video' => VIDEO,
     'tmp_dir' => './tmp',
-    'out_dir' => './out',
+    # out_dir isn't set here -- it's always derived from `title` (see below),
+    # since a fresh config's title is still just the video's basename.
     'log_file' => './roncoder.log',
     'folder_thumbnail' => './folder.jpg',
     'global_config' => {
@@ -83,6 +107,10 @@ else
   puts "No 'roncoder.json' found; creating one with a placeholder title of #{ CONFIG['title'].inspect }.".green
   atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
 end
+
+# Always derived from the current title, same reasoning as roncoder.rb --
+# see its comment next to the equivalent line.
+CONFIG['out_dir'] = "./#{ sanitize_filename(CONFIG['title']) }"
 
 if CONFIG['titles'].nil? || CONFIG['titles'].empty?
   puts 'No splits configured yet.'.green
@@ -109,7 +137,12 @@ def log(text = '', display: true)
   f.close
 end
 
-unless File.exist?(CONFIG['video'])
+# A shared top-level 'video' is the common case (one file being cut into
+# several segments), but a title can override it with its own 'video' --
+# e.g. a disc that bundles several already-separate source clips (see
+# cut_video) rather than one file to split. Only enforce existence here for
+# the shared case; a per-title override is checked in cut_video instead.
+if CONFIG['video'] && !File.exist?(CONFIG['video'])
   log "Missing source video: #{ CONFIG['video'] }".red
   exit 1
 end
@@ -161,11 +194,20 @@ end
 # roncoder.rb's crop_cache_key.
 def cut_video(num, config)
   outfile = get_tmp_filename(num, config)
-  log("Cutting split #{ num } (#{ config['start'] }s - #{ config['end'] }s) -> #{ outfile }".green)
+  # config['video'] lets a title point at its own already-separate source
+  # file instead of the collection's shared one -- see the note above the
+  # top-level existence check.
+  source_video = config['video'] || CONFIG['video']
+  log("Cutting split #{ num } (#{ config['start'] }s - #{ config['end'] }s) from #{ source_video } -> #{ outfile }".green)
 
   if File.exist?(outfile) && get_duration(outfile) != -1
     log "Already cut; skipping: #{ outfile }".cyan
     return outfile
+  end
+
+  unless source_video && File.exist?(source_video)
+    log "Missing source video for split #{ num }: #{ source_video.inspect }".red
+    return nil
   end
 
   duration = config['end'].to_f - config['start'].to_f
@@ -177,7 +219,7 @@ def cut_video(num, config)
   # -ss before -i (fast seek) then -t for duration -- avoids -to's confusing
   # interaction with a seeked input timeline.
   system(<<~FFMPEG)
-    ffmpeg -y -ss #{ config['start'] } -i "#{ CONFIG['video'] }" -t #{ duration } \
+    ffmpeg -y -ss #{ config['start'] } -i "#{ source_video }" -t #{ duration } \
       -c:v libx264 -crf 18 -preset medium -c:a aac -movflags +faststart \
       "#{ outfile }"
   FFMPEG
@@ -281,7 +323,7 @@ end
 
 def describe_split(num, config)
   duration = config['end'].to_f - config['start'].to_f
-  base_filename = '%02d %s' % [num.to_i, config['title']]
+  base_filename = '%02d %s' % [num.to_i, sanitize_filename(config['title'])]
 
   puts "Split #{ num }: #{ config['start'] }s - #{ config['end'] }s (#{ duration.round(1) }s)".cyan
   puts "  would cut into: #{ get_tmp_filename(num, config) }".cyan
@@ -321,7 +363,7 @@ begin
     title_config['info']['bit_rate'] = get_bit_rate(outfile)
     title_config['info']['duration'] = get_duration(outfile)
 
-    base_filename = '%02d %s' % [num.to_i, config['title']]
+    base_filename = '%02d %s' % [num.to_i, sanitize_filename(config['title'])]
     log("Base filename: #{ base_filename }")
 
     FileUtils.cp(outfile, File.join(CONFIG['out_dir'], "#{ base_filename }.mp4"), verbose: true)

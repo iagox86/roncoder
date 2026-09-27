@@ -11,14 +11,26 @@ using Rainbow
 OPTS = Optimist.options do
   banner "Usage: #{ $PROGRAM_NAME } [--scan-dir DIR] [--out FILE]"
   opt :scan_dir, 'Directory to scan for roncoder.json files', type: :string, default: File.join(File.dirname(File.expand_path(__FILE__)), 'working')
-  opt :out, 'Output PDF path', type: :string, default: File.join(File.dirname(File.expand_path(__FILE__)), 'library-review.pdf')
+  opt :out, 'Write one combined PDF to this path instead of a review.pdf per disc/video folder', type: :string
 end
 
 HEADSHOTS_DIR = '/home/ron/projects/www.javaop.com/headshots'
 LINK_COLOR = '0000EE'
 NOTE_COLOR = 'B00000'
 NOTE_BG = 'FFF0F0'
-SHORT_DURATION_SECONDS = 60
+CONFIRMED_COLOR = '007000'
+# Under this, a chapter is likely a stub/phantom marker rather than real
+# content (see CLAUDE.md's crop_mode section for a worked example of a
+# genuinely broken ~34ms chapter) -- flag it for a human glance rather than
+# silently trusting it. 60s flagged too much legitimate short content
+# (intros, closing credits, etc).
+SHORT_DURATION_SECONDS = 15
+CONFIRMED_BY_LABELS = {
+  'dvd_menu' => 'DVD menu',
+  'title_card' => 'Title card',
+  'manual' => 'Manual',
+  'other' => 'Other source',
+}.freeze
 
 # roncoder.rb's get_duration stores mediainfo's own duration text with spaces
 # stripped, e.g. "4min50s", "16min35s", "39s808ms" -- parse it back into
@@ -65,18 +77,72 @@ def sorted_chapters(config)
       rows << { title_num: t, chapter_num: nil, data: title_config }
     end
   end
-  rows
+
+  # Simulates actual Jellyfin/Kodi playback order rather than raw disc/title
+  # order: sort by sort_title when set, otherwise by the same base_filename
+  # string the .nfo's own sorttitle falls back to when sort_title is unset --
+  # so a disc like Hundy 500 (whose sort_title deliberately reorders across
+  # title boundaries to match the DVD's own menu order) previews in the table
+  # the same way it'll actually play.
+  rows.sort_by { |row| [row[:data]['sort_title'] || base_filename(row), base_filename(row)] }
+end
+
+# Mirrors roncoder.rb's own sanitize_filename -- the actual output filename
+# has this applied (NTFS-safe even though everything runs on Linux day to
+# day), but roncoder.json's title text keeps the original punctuation
+# (colons and all) for full display fidelity in the .nfo. Reconstructing a
+# poster path straight from the raw title text (no sanitizing) silently
+# missed every chapter whose card text had a colon in it -- e.g. "Performance:
+# Rosediction" -- since the real file on disk is "Performance - Rosediction".
+def sanitize_filename(str)
+  str
+    .gsub('/', '-')
+    .gsub('\\', '-')
+    .gsub(':', ' -')
+    .gsub(/[?*]/, '')
+    .gsub('"', "'")
+    .gsub('<', '(')
+    .gsub('>', ')')
+    .gsub('|', '-')
+    .gsub(/[\x00-\x1f]/, '')
+    .gsub(/\s+/, ' ')
+    .strip
+    .sub(/\.+\z/, '')
+end
+
+# Mirrors roncoder.rb's own global_config -> title -> chapter merge cascade
+# (a shallow `.merge`, same as roncoder.rb's own do_rip) for a single scalar
+# field -- chapters relying on the disc-wide default (no per-chapter
+# override) otherwise showed up blank in the PDF instead of the value
+# actually in effect.
+def effective_field(config, row, field)
+  data = row[:data]
+  return data[field] if data.key?(field) && !data[field].nil?
+
+  if row[:chapter_num]
+    title_config = config.dig('titles', row[:title_num]) || {}
+    return title_config[field] if title_config.key?(field) && !title_config[field].nil?
+  end
+
+  config.dig('global_config', field)
+end
+
+# The base filename roncoder.rb itself derives a title/chapter's output files
+# from -- also what the .nfo's <sorttitle> falls back to when sort_title is
+# unset (see sorted_chapters).
+def base_filename(chapter_row)
+  title_num = chapter_row[:title_num]
+  chapter_num = chapter_row[:chapter_num]
+  sanitized_title = sanitize_filename(chapter_row[:data]['title'])
+  if chapter_num
+    '%02d-%02d %s' % [title_num.to_i, chapter_num.to_i, sanitized_title]
+  else
+    '%02d %s' % [title_num.to_i, sanitized_title]
+  end
 end
 
 def chapter_poster_path(folder, chapter_row, config)
-  title_num = chapter_row[:title_num]
-  chapter_num = chapter_row[:chapter_num]
-  base = if chapter_num
-    '%02d-%02d %s' % [title_num.to_i, chapter_num.to_i, chapter_row[:data]['title']]
-  else
-    '%02d %s' % [title_num.to_i, chapter_row[:data]['title']]
-  end
-  File.join(folder, config['out_dir'] || 'out', "#{ base }.jpg")
+  File.join(folder, config['out_dir'] || "./#{ sanitize_filename(config['title']) }", "#{ base_filename(chapter_row) }.jpg")
 end
 
 SCRATCH_FILES = []
@@ -112,103 +178,138 @@ end
 puts "Found #{ items.length } items:".green
 items.each { |i| puts "  - #{ File.basename(i[:folder]) } (#{ i[:disc] ? 'disc' : 'standalone' })" }
 
-Prawn::Document.generate(OPTS[:out], page_size: 'LETTER', margin: 36) do |pdf|
-  items.each_with_index do |item, idx|
-    pdf.start_new_page unless idx.zero?
+def render_item(pdf, item)
+  config = item[:config]
+  folder = item[:folder]
+  metadata = metadata_for(config)
+  title = config['title'] || File.basename(folder)
 
-    config = item[:config]
-    folder = item[:folder]
-    metadata = metadata_for(config)
-    title = config['title'] || File.basename(folder)
+  pdf.text title, size: 18, style: :bold
+  pdf.text item[:disc] ? 'DISC' : 'STANDALONE FILE', size: 9, color: '888888'
+  pdf.move_down 4
+  pdf.formatted_text [{ text: File.basename(folder), link: file_url(folder), color: LINK_COLOR, underline: true, size: 10 }]
+  pdf.move_down 8
 
-    pdf.text title, size: 18, style: :bold
-    pdf.text item[:disc] ? 'DISC' : 'STANDALONE FILE', size: 9, color: '888888'
+  # Cover art: folder.jpg for a disc, the video's own poster for standalone
+  cover = if item[:disc]
+    File.join(folder, config['out_dir'] || "./#{ sanitize_filename(config['title']) }", 'folder.jpg')
+  else
+    Dir.glob(File.join(folder, '*.jpg')).reject { |f| f =~ /-fanart\.jpg$|-logo\.jpg$/ }.first
+  end
+  if cover && File.exist?(cover)
+    pdf.image cover, width: 110
+    pdf.move_down 8
+  end
+
+  pdf.text "Year: #{ metadata['year'] || '(none)' }    Genre: #{ metadata['genre'] || '(none)' }", size: 10
+  pdf.text "Director: #{ metadata['director'].to_s.empty? ? '(none)' : metadata['director'] }    Writer: #{ metadata['writer'].to_s.empty? ? '(none)' : metadata['writer'] }", size: 10
+  plot = metadata['plot'].to_s
+  if plot.empty?
     pdf.move_down 4
-    pdf.formatted_text [{ text: File.basename(folder), link: file_url(folder), color: LINK_COLOR, underline: true, size: 10 }]
-    pdf.move_down 8
+    pdf.text '(no plot)', size: 8, color: 'CC0000'
+  else
+    pdf.move_down 4
+    pdf.text plot, size: 8, color: '666666'
+  end
+  pdf.move_down 8
 
-    # Cover art: folder.jpg for a disc, the video's own poster for standalone
-    cover = if item[:disc]
-      File.join(folder, config['out_dir'] || 'out', 'folder.jpg')
-    else
-      Dir.glob(File.join(folder, '*.jpg')).reject { |f| f =~ /-fanart\.jpg$|-logo\.jpg$/ }.first
+  actors = (metadata['actor'] || []).reject { |a| a['name'].to_s.empty? }
+  if actors.any?
+    actor_rows = actors.map do |actor|
+      headshot = find_headshot(actor['name'])
+      image_cell = headshot ? { image: headshot, fit: [36, 36] } : 'no headshot'
+      [image_cell, "#{ actor['name'] } (#{ actor['role'] })"]
     end
-    if cover && File.exist?(cover)
-      pdf.image cover, width: 110
-      pdf.move_down 8
-    end
-
-    pdf.text "Year: #{ metadata['year'] || '(none)' }    Genre: #{ metadata['genre'] || '(none)' }", size: 10
-    pdf.text "Director: #{ metadata['director'].to_s.empty? ? '(none)' : metadata['director'] }    Writer: #{ metadata['writer'].to_s.empty? ? '(none)' : metadata['writer'] }", size: 10
-    plot = metadata['plot'].to_s
-    if plot.empty?
-      pdf.move_down 4
-      pdf.text '(no plot)', size: 8, color: 'CC0000'
-    else
-      pdf.move_down 4
-      pdf.text plot, size: 8, color: '666666'
+    pdf.table(actor_rows, cell_style: { borders: [], padding: [2, 6, 2, 0] }) do |t|
+      t.column(0).width = 44
     end
     pdf.move_down 8
+  end
 
-    actors = (metadata['actor'] || []).reject { |a| a['name'].to_s.empty? }
-    if actors.any?
-      actor_rows = actors.map do |actor|
-        headshot = find_headshot(actor['name'])
-        image_cell = headshot ? { image: headshot, fit: [36, 36] } : 'no headshot'
-        [image_cell, "#{ actor['name'] } (#{ actor['role'] })"]
+  return unless item[:disc]
+
+  chapters = sorted_chapters(config)
+
+  pdf.start_new_page
+  unit = config['split_chapters'] ? 'chapters' : 'titles'
+  pdf.text "#{ title } -- #{ chapters.length } #{ unit }", size: 12, style: :bold
+  pdf.move_down 6
+
+  # Thumbnail sits right next to the title in the same row -- deliberately
+  # a long table rather than a separate contact-sheet overview, so title
+  # and thumbnail are always side by side for review.
+  rows = [['', '#', 'Title', 'Sort title', 'Thumb offset', 'Duration', 'Confirmed', 'Note']]
+  flagged_rows = []
+  confirmed_rows = []
+  chapters.each_with_index do |row, i|
+    data = row[:data]
+    poster = chapter_poster_path(folder, row, config)
+    thumb = small_thumbnail(poster, [60, 90])
+    duration = data.dig('info', 'duration')
+    duration_seconds = parse_duration_seconds(duration)
+    manual_thumbnail = effective_field(config, row, 'manual_thumbnail')
+    thumb_offset_display =
+      if effective_field(config, row, 'rip_thumbnail') == false && manual_thumbnail
+        "shared (#{ File.basename(manual_thumbnail) })"
+      else
+        effective_field(config, row, 'thumbnail_offset') || ''
       end
-      pdf.table(actor_rows, cell_style: { borders: [], padding: [2, 6, 2, 0] }) do |t|
-        t.column(0).width = 44
-      end
-      pdf.move_down 8
+
+    # A red-flagged row must always show *why* -- never highlight without
+    # an explanation in the cell itself (a short-duration flag used to
+    # paint the row red with a blank Note column, which just looked like
+    # an unexplained error).
+    note = data['note']
+    if note.nil? && duration_seconds && duration_seconds < SHORT_DURATION_SECONDS
+      note = "Short chapter (#{ duration }) -- worth a quick check"
     end
+    flagged_rows << (i + 1) if note
 
-    next unless item[:disc]
+    confirmed_by = data['confirmed_by']
+    confirmed_rows << (i + 1) if confirmed_by
 
-    chapters = sorted_chapters(config)
+    rows << [
+      thumb ? { image: thumb, fit: [50, 75] } : '',
+      row[:chapter_num] ? "#{ row[:title_num] }-#{ row[:chapter_num] }" : row[:title_num],
+      data['title'],
+      data['sort_title'] || '',
+      thumb_offset_display,
+      duration || '',
+      confirmed_by ? "Confirmed: #{ CONFIRMED_BY_LABELS[confirmed_by] || confirmed_by }" : '',
+      note || '',
+    ]
+  end
 
-    pdf.start_new_page
-    unit = config['split_chapters'] ? 'chapters' : 'titles'
-    pdf.text "#{ title } -- #{ chapters.length } #{ unit }", size: 12, style: :bold
-    pdf.move_down 6
-
-    # Thumbnail sits right next to the title in the same row -- deliberately
-    # a long table rather than a separate contact-sheet overview, so title
-    # and thumbnail are always side by side for review.
-    rows = [['', '#', 'Title', 'Sort title', 'Thumb offset', 'Duration', 'Note']]
-    short_duration_rows = []
-    chapters.each_with_index do |row, i|
-      data = row[:data]
-      poster = chapter_poster_path(folder, row, config)
-      thumb = small_thumbnail(poster, [60, 90])
-      duration = data.dig('info', 'duration')
-      short_duration_rows << (i + 1) if parse_duration_seconds(duration)&.< (SHORT_DURATION_SECONDS)
-      rows << [
-        thumb ? { image: thumb, fit: [50, 75] } : '',
-        row[:chapter_num] ? "#{ row[:title_num] }-#{ row[:chapter_num] }" : row[:title_num],
-        data['title'],
-        data['sort_title'] || '',
-        data['thumbnail_offset'] || '',
-        duration || '',
-        data['note'] || '',
-      ]
+  pdf.table(rows, header: true, width: pdf.bounds.width, cell_style: { size: 7, padding: 4, valign: :center }) do |t|
+    t.row(0).font_style = :bold
+    t.row(0).background_color = 'DDDDDD'
+    t.column(0).width = 58
+    t.column(6).width = 90
+    t.column(7).width = 150
+    flagged_rows.each do |i|
+      t.row(i).background_color = NOTE_BG
+      t.row(i).text_color = NOTE_COLOR
     end
-
-    pdf.table(rows, header: true, width: pdf.bounds.width, cell_style: { size: 7, padding: 4, valign: :center }) do |t|
-      t.row(0).font_style = :bold
-      t.row(0).background_color = 'DDDDDD'
-      t.column(0).width = 58
-      t.column(6).width = 190
-      rows.each_with_index do |r, i|
-        next if i.zero? || (r[6].to_s.empty? && !short_duration_rows.include?(i))
-
-        t.row(i).background_color = NOTE_BG
-        t.row(i).text_color = NOTE_COLOR
-      end
+    confirmed_rows.each do |i|
+      t.row(i).column(6).text_color = CONFIRMED_COLOR
     end
   end
 end
 
-SCRATCH_FILES.each { |f| File.delete(f) if File.exist?(f) }
+if OPTS[:out]
+  Prawn::Document.generate(OPTS[:out], page_size: 'LETTER', margin: 36) do |pdf|
+    items.each_with_index do |item, idx|
+      pdf.start_new_page unless idx.zero?
+      render_item(pdf, item)
+    end
+  end
+  puts "Wrote #{ OPTS[:out] }".green
+else
+  items.each do |item|
+    out_path = File.join(item[:folder], 'review.pdf')
+    Prawn::Document.generate(out_path, page_size: 'LETTER', margin: 36) { |pdf| render_item(pdf, item) }
+    puts "Wrote #{ out_path }".green
+  end
+end
 
-puts "Wrote #{ OPTS[:out] }".green
+SCRATCH_FILES.each { |f| File.delete(f) if File.exist?(f) }

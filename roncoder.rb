@@ -18,6 +18,29 @@ def atomic_write(path, content)
   File.rename(tmp_path, path)
 end
 
+# This runs on Linux day-to-day, but output titles are transcribed straight
+# off DVD title cards (which often read like "Category: Subject") and the
+# library sometimes gets copied to non-Linux filesystems -- so keep actual
+# output filenames NTFS-safe regardless of what punctuation made it into
+# roncoder.json's title text. Only used for the filename itself; the
+# unmodified original text is still what lands in the .nfo's <title>, so
+# display fidelity (colons and all) isn't lost, just the on-disk filename.
+def sanitize_filename(str)
+  str
+    .gsub('/', '-')
+    .gsub('\\', '-')
+    .gsub(':', ' -')
+    .gsub(/[?*]/, '')
+    .gsub('"', "'")
+    .gsub('<', '(')
+    .gsub('>', ')')
+    .gsub('|', '-')
+    .gsub(/[\x00-\x1f]/, '')
+    .gsub(/\s+/, ' ')
+    .strip
+    .sub(/\.+\z/, '')
+end
+
 OPTS = Optimist.options do
   banner "Usage: #{ $PROGRAM_NAME } [options] <media file or folder>"
   opt :dry_run, 'Validate configuration and discover titles/chapters, but never rip video/thumbnails', default: false
@@ -88,7 +111,8 @@ else
     'handbrake_config' => File.join(SCRIPT_DIR, 'presets.json'),
     'tmp_dir' => './tmp',
     'thumbnail_tmp_dir' => './thumbnails',
-    'out_dir' => './out',
+    # out_dir isn't set here -- it's always derived from `title` (see below),
+    # since a fresh config's title is still just an ISO-basename placeholder.
     'log_file' => './roncoder.log',
     'split_chapters' => true,
     'folder_thumbnail' => './folder.jpg',
@@ -132,6 +156,13 @@ else
   puts "No 'roncoder.json' found; creating one with a placeholder title of #{ CONFIG['title'].inspect }.".green
   atomic_write('roncoder.json', JSON.pretty_generate(CONFIG))
 end
+
+# Always derived from the current title (not a fixed default kept only at
+# creation time) -- title is often just an ISO-basename placeholder on the
+# first run and gets polished later via apply-metadata.rb, and out_dir
+# should track that so the output folder is upload-ready (named after the
+# disc, not the generic "out") without a separate manual rename step.
+CONFIG['out_dir'] = "./#{ sanitize_filename(CONFIG['title']) }"
 
 def log(text = '', display: true)
   if display
@@ -305,9 +336,23 @@ def rip_video_with_bitrate_target(config, title, chapter)
   loop do
     bit_rate = get_bit_rate(outfile)
     if bit_rate == -1
-      # Don't abort the whole run over one file mediainfo can't parse (e.g.
-      # a genuinely tiny/degenerate chapter) -- accept it as-is and move on.
-      log "Failed to get bitrate for #{ outfile }! Accepting as-is.".red
+      # A file mediainfo can't get a bitrate for is either a genuinely
+      # tiny/degenerate chapter (real content, just very short) or a
+      # HandBrake rip that silently failed (e.g. a NAV-packet read error
+      # part-way through the disc) and left behind a near-empty stub --
+      # those two cases look identical to get_bit_rate alone. Use duration
+      # to tell them apart: a real chapter, however short, still has a
+      # parseable duration; a failed rip doesn't. Only accept the former.
+      if get_duration(outfile) == -1
+        log "Failed to get bitrate OR duration for #{ outfile } -- looks like a failed rip, not a short chapter. Treating as failed.".red
+        FAILED_RIPS << {
+          chapter: chapter,
+          title: title,
+        }
+        return nil
+      end
+
+      log "Failed to get bitrate for #{ outfile }, but duration looks valid -- accepting as a short/degenerate chapter.".red
       return outfile, config['quality']
     end
 
@@ -459,9 +504,9 @@ def describe_rip(title:, chapter:, config:)
   outfile = get_tmp_filename(title: title, chapter: chapter, config: config)
 
   base_filename = if chapter.nil?
-    '%02d %s' % [title, config['title']]
+    '%02d %s' % [title, sanitize_filename(config['title'])]
   else
-    '%02d-%02d %s' % [title, chapter, config['title']]
+    '%02d-%02d %s' % [title, chapter, sanitize_filename(config['title'])]
   end
 
   puts "Title #{ title } chapter #{ chapter || 'n/a' }: quality #{ config['quality'] }, #{ crop_args(config) }".cyan
@@ -495,9 +540,9 @@ def do_rip(title:, chapter:, config:, updateable_config:)
   updateable_config['info']['duration'] = get_duration(outfile)
 
   if chapter.nil?
-    base_filename = '%02d %s' % [title, config['title']]
+    base_filename = '%02d %s' % [title, sanitize_filename(config['title'])]
   else
-    base_filename = '%02d-%02d %s' % [title, chapter, config['title']]
+    base_filename = '%02d-%02d %s' % [title, chapter, sanitize_filename(config['title'])]
   end
 
   log("Base filename: #{ base_filename }")

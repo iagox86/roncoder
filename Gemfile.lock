@@ -1,6 +1,7 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    base64 (0.3.0)
     bigdecimal (3.3.1)
     matrix (0.4.3)
     optimist (3.2.1)
@@ -20,6 +21,7 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
+  base64
   optimist
   prawn
   prawn-table
