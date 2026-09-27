@@ -274,6 +274,10 @@ def rip_video(config, title, chapter = nil)
     return outfile
   end
 
+  if config['video']
+    return rip_from_video_override(config, title, chapter, outfile)
+  end
+
   log "Ripping: #{ outfile }.....".green
   system(<<~FLATPAK
     flatpak run --command=HandBrakeCLI fr.handbrake.ghb \
@@ -300,6 +304,48 @@ def rip_video(config, title, chapter = nil)
       title: title,
     }
 
+    return nil
+  end
+end
+
+# A title/chapter can override the normal HandBrake DVD rip with 'video',
+# pointing at an already-extracted source file instead of an -i/-t/-c
+# HandBrake pull off CONFIG['dvd'] -- for content dvdunauthor/manual PGC
+# analysis recovered that HandBrake's own disc scan never found as a
+# rippable title/chapter at all (see the Mark Mason "Put & Take" recovery,
+# where the real lecture lived in PGCs outside the one PGC HandBrake ever
+# numbered as chapters). Same idea, and the same plain-ffmpeg re-encode
+# settings, as split-file.rb's per-title 'video' override -- just reached
+# from roncoder.rb's normal per-chapter rip loop instead of split-file.rb's
+# cut loop, so it participates in the same tmp/ cache and out_dir rebuild as
+# every other chapter on the disc.
+def rip_from_video_override(config, title, chapter, outfile)
+  source_video = config['video']
+  unless source_video && File.exist?(source_video)
+    log "Missing source video override for title #{ title } chapter #{ chapter || 'n/a' }: #{ source_video.inspect }".red
+    FAILED_RIPS << {
+      chapter: chapter,
+      title: title,
+    }
+    return nil
+  end
+
+  log "Encoding from source video override: #{ source_video } -> #{ outfile }".green
+  system(<<~FFMPEG)
+    ffmpeg -y -i "#{ source_video }" \
+      -c:v libx264 -crf 18 -preset medium -c:a aac -movflags +faststart \
+      "#{ outfile }"
+  FFMPEG
+
+  if File.exist?(outfile) && get_duration(outfile) != -1
+    log "Done @ #{ outfile }".green
+    return outfile
+  else
+    log "Failed @ #{ outfile }!!".red
+    FAILED_RIPS << {
+      chapter: chapter,
+      title: title,
+    }
     return nil
   end
 end
