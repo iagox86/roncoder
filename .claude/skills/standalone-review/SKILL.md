@@ -1,6 +1,6 @@
 ---
 name: standalone-review
-description: Hands-off packaging pass for a single already-encoded video file via standalone-file.rb -- no re-encoding. Finds a representative thumbnail frame if one isn't given, makes a best-effort attempt at metadata (title, year, genre, performer, headshot) via web search, and produces the same poster/fanart/logo/.nfo set as a disc rip.
+description: Hands-off packaging pass for a single already-encoded video file via standalone-file.rb -- no re-encoding. Finds a representative thumbnail frame if one isn't given, makes a best-effort attempt at metadata (title, year, genre, plot, performer, headshot) via web search, and produces the same poster/fanart/logo/.nfo set as a disc rip.
 ---
 
 # standalone-review
@@ -159,7 +159,13 @@ conversation:
    d. **Director/writer.** Only if the user told you directly or a source
       explicitly credits someone -- don't stretch from a weak inference.
 
-   e. **Apply findings**, without `--force` (never overwrite metadata a
+   e. **Plot.** Attempt this now rather than leaving it purely manual --
+      prefer a source's own synopsis text (packaging, a store listing's
+      product description) over a web-search-assembled one when available.
+      Write it as a single paragraph. Same best-effort spirit as everything
+      else in this step -- say what you found (or didn't) in the summary.
+
+   f. **Apply findings**, without `--force` (never overwrite metadata a
       human already filled in):
 
       ```
@@ -167,6 +173,7 @@ conversation:
         --title "Display Title" \
         --year YYYY \
         --genre "Genre" \
+        --plot "Synopsis paragraph..." \
         [--director "Name"] [--writer "Name"] \
         --actor-name "Firstname Lastname" \
         --role "Self"
@@ -176,7 +183,7 @@ conversation:
       for a disc's `roncoder.json` -- it checks for a top-level `metadata`
       key first, falling back to `global_config.metadata`.
 
-   f. **Headshot.** Compute the expected path:
+   g. **Headshot.** Compute the expected path:
       `/home/ron/projects/www.javaop.com/headshots/<Name-With-Dashes>.jpg`.
       If it already exists, leave it alone and note that in the summary.
       Otherwise web search for a photo and download it:
@@ -198,8 +205,8 @@ conversation:
 
 5. **Report a summary**: the thumbnail timestamp chosen (and why, if a
    title card vs. a representative frame), and the metadata findings
-   (title, year, genre, performer, headshot status) -- clearly labeled as
-   best-effort. `plot` is not attempted -- still manual.
+   (title, year, genre, plot source, performer, headshot status) -- clearly
+   labeled as best-effort.
 
 ## Things this skill must never do
 
