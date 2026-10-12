@@ -1,13 +1,17 @@
 ---
 name: rip-review
-description: Hands-off post-rip pass for a roncoder.rb disc folder. Runs the default rip, inspects each chapter's opening frames to detect a title card, reads the on-screen text, and sets the chapter title + thumbnail_offset in roncoder.json. Also makes a best-effort attempt at metadata -- disc title, release year, genre, plot/synopsis, performer name(s), a headshot in the www.javaop.com repo, and DVD cover art -- via DVD packaging text and web search, for human review. Does not touch cropping (left to HandBrake's --crop-mode auto).
+description: Hands-off post-rip pass for a roncoder.rb disc folder. Runs the default rip, decodes the disc's DVD menu (extract-dvd-menu.rb) as the primary source for each chapter's title text, cross-checks/supplements it by inspecting each chapter's opening frames for a title card (also needed to pick the thumbnail frame), and sets the chapter title + thumbnail_offset in roncoder.json. Also makes a best-effort attempt at metadata -- disc title, release year, genre, plot/synopsis, performer name(s), a headshot in the www.javaop.com repo, and DVD cover art -- via DVD packaging text and web search, for human review. Does not touch cropping (left to HandBrake's --crop-mode auto).
 ---
 
 # rip-review
 
-Automates the tedious part of `roncoder.rb`'s review loop: looking at each
-chapter's video to find a title card and typing its text into
-`roncoder.json`, plus a best-effort pass at filling in metadata (title,
+Automates the tedious part of `roncoder.rb`'s review loop: decoding the
+disc's DVD menu structure (`extract-dvd-menu.rb`) to get each chapter's
+title text straight from its menu button label -- this gets better
+results than reading title cards alone, so it's checked first -- then
+looking at each chapter's video to find a title card to cross-check that
+text and to pick the thumbnail frame, and typing the result into
+`roncoder.json`. Plus a best-effort pass at filling in metadata (title,
 year, genre, plot, performer, headshot, cover art) via DVD packaging text
 and web search. Cropping is left alone (HandBrake's `--crop-mode auto`
 handles it).
@@ -160,20 +164,38 @@ conversation:
    pass below -- many discs have a "Performances"/"Explanations"-style
    split where the SAME trick gets two different chapters (a bare
    performance clip and a separate explained breakdown), and the menu is
-   often the only place that distinction is named. Use the menu's
-   button-to-chapter mapping (see step i2 below for the mechanics and the
-   validated ~92% accuracy/known caveats) as a primary source alongside
-   each chapter's own on-screen card, not only when the card search comes
-   up empty -- cross-check the two against each other rather than trusting
-   either alone, and prefer the on-screen card's exact wording when the two
-   disagree (the menu button is often an abbreviated/inconsistent label,
-   not necessarily the authoritative text). If the disc's chapter
-   boundaries come back all `0:00:00.000` in the report (seen on some
-   discs with non-standard authoring, unlike the tool's original Meir
-   Yedid validation disc), don't trust the automatic boundary/offset
-   detection -- the menu page screenshots and button->chapter-number
-   mapping are still useful on their own, just verify button counts
-   against visible on-screen item counts more carefully.
+   often the only place that distinction is named.
+
+   **The menu's button-to-chapter mapping is now the primary source for
+   title text, checked first for every chapter -- not a fallback for
+   card-less chapters.** In practice it gets better results than
+   frame-by-frame title-card reading: it's immune to cards that never
+   appear on screen at all, cards split onto a preceding chapter (see
+   3c2), and ambiguous ingredients-vs-episode-card ordering (see 3d), and
+   it covers the whole disc from one `dvdunauthor` decode instead of a
+   per-chapter frame search. Before touching the frame-extraction steps
+   below, look up each chapter's roncoder-equivalent number in the menu
+   report (see 3i2 for the mechanics and the validated ~92%
+   accuracy/known caveats) and use its button label as the title-text
+   candidate, applied with `--confirmed-by dvd_menu`. Still run the frame
+   search (3c onward) for every chapter regardless -- it's the only way
+   to find an actual title-card frame for the thumbnail image (the menu
+   gives you text, not a usable frame) -- and treat a clean, legible
+   on-screen card as a cross-check against the menu label: they usually
+   agree, and when they don't, the on-screen card's wording is still the
+   better *text* source (the menu button is often an
+   abbreviated/inconsistent label) even though the menu was better at
+   simply *having* a name at all. Only when the menu has no entry for a
+   chapter (or the disc has no menu structure to decode) does the frame
+   search become the primary source rather than a cross-check -- see 3i.
+
+   If the disc's chapter boundaries come back all `0:00:00.000` in the
+   report (seen on some discs with non-standard authoring, unlike the
+   tool's original Meir Yedid validation disc), don't trust the automatic
+   boundary/offset detection -- the menu page screenshots and
+   button->chapter-number mapping are still useful on their own, just
+   verify button counts against visible on-screen item counts more
+   carefully.
 
    **Thumbnail priority: a title card beats a representative action frame,
    always try the card first.** This still applies even when the chapter's
@@ -384,22 +406,26 @@ conversation:
    h. Apply the result with the helper script (it re-checks the
       untouched-default condition itself, so it's safe to call even if you
       re-run this skill later). **Always pass `--confirmed-by` when the name
-      came from a trusted source** (`title_card` for an on-screen card,
-      `dvd_menu` for the disc's menu, `manual` when Ron gave it directly,
-      `other` for anything else solid, e.g. a corroborating product
-      listing) -- this drives the green "Confirmed" column in the review
-      PDF, added 2026-08-13 specifically so a human skimming the PDF can
-      tell a solidly-sourced name apart from a guess at a glance. Leave it
-      unset for anything you're inferring/guessing rather than reading
-      directly (and use `--note` instead to explain the uncertainty, per
-      step i below):
+      came from a trusted source** (`dvd_menu` for a name sourced from the
+      disc's menu -- the default when the menu report has an entry for
+      this chapter, per the lead-in to step 3 above; `title_card` for a
+      name sourced from an on-screen card, used when the menu has no
+      entry or when the card's wording was preferred over the menu's
+      abbreviated label on a disagreement; `manual` when Ron gave it
+      directly; `other` for anything else solid, e.g. a corroborating
+      product listing) -- this drives the green "Confirmed" column in the
+      review PDF, added 2026-08-13 specifically so a human skimming the
+      PDF can tell a solidly-sourced name apart from a guess at a glance.
+      Leave it unset for anything you're inferring/guessing rather than
+      reading directly (and use `--note` instead to explain the
+      uncertainty, per step i below):
 
       ```
       ruby /var/home/ron/projects/roncoding/apply-chapter-title.rb \
         --title N --chapter M \
         --name "Sanitized Title" \
         --thumbnail-offset "4000ms" \
-        --confirmed-by title_card \
+        --confirmed-by dvd_menu \
         [--sort-title "Episode 04: Hail Seitan"]
       ```
 
@@ -428,19 +454,20 @@ conversation:
       the chapter. Don't write one just to record which source confirmed a
       name you're actually confident in.
 
-   i. If no legible title card was found in any candidate frame, don't call
-      the helper script for that chapter yet -- check the menu report
-      already pulled at the start of step 3 (see i2 below) before giving
-      up and flagging it for manual
-      review.
+   i. Only fall through to flagging a chapter for manual review (no title
+      applied) when **both** sources come up empty: the menu report has no
+      entry for this chapter (see i2 -- check this first, per the lead-in
+      to step 3) **and** no legible title card was found in any candidate
+      frame (3c/3c2). Either source alone is enough to proceed -- don't
+      wait on both.
 
-   i2. **No card? Check the menu report -- this is now a validated,
-      trustworthy primary method, not just a hint.** Many of these discs
-      have a chapter-select menu whose button labels are exactly the names
-      missing from card-less chapters. This should already be pulled from
-      the lead-in to step 3 above; if it wasn't (e.g. this chapter was
-      hit before that guidance existed, or the up-front run was skipped),
-      run it now:
+   i2. **Check the menu report for this chapter's name -- this is the
+      validated, trustworthy primary method, not just a hint for
+      card-less chapters.** Many of these discs have a chapter-select menu
+      whose button labels name every chapter, card or no card. This
+      should already be pulled from the lead-in to step 3 above; if it
+      wasn't (e.g. this chapter was hit before that guidance existed, or
+      the up-front run was skipped), run it now:
       `ruby /var/home/ron/projects/roncoding/extract-dvd-menu.rb <iso>`
       decodes the disc's menu structure (via `dvdunauthor`) into exact
       chapter boundaries (in both disc-native and roncoder-equivalent
