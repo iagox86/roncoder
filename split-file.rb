@@ -244,7 +244,7 @@ def do_thumbnail(config, base_filename, video_file)
     tempfile = Tempfile.create(['thumbnail', '.jpg'])
     tempfile.close
 
-    system("ffmpeg -y -ss #{ config['thumbnail_offset'] } -i \"#{ video_file }\" -frames:v 1 -q:v 2 \"#{ tempfile.to_path }\"")
+    system('ffmpeg', '-y', '-ss', config['thumbnail_offset'].to_s, '-i', video_file, '-frames:v', '1', '-q:v', '2', tempfile.to_path)
     base_thumbnail = tempfile.to_path
   end
 
@@ -253,14 +253,17 @@ def do_thumbnail(config, base_filename, video_file)
     return
   end
 
+  # Array-form system() (no shell) -- see roncoder.rb's do_thumbnail for why:
+  # a title with a shell metacharacter (e.g. "$") silently corrupted the
+  # output filename when this was a single interpolated command string.
   thumbnail_file = File.join(CONFIG['out_dir'], "#{ base_filename }.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ thumbnail_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], thumbnail_file)
 
   fanart_file = File.join(CONFIG['out_dir'], "#{ base_filename }-fanart.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_fanart_size'] } -background none -gravity center -extent #{ config['thumbnail_fanart_size'] } \"#{ fanart_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_fanart_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_fanart_size'], fanart_file)
 
   logo_file = File.join(CONFIG['out_dir'], "#{ base_filename }-logo.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ logo_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], logo_file)
 
   if tempfile
     File.unlink(tempfile)

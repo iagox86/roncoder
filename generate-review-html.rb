@@ -237,20 +237,27 @@ STYLE = <<~CSS
   }
   .thumb-cell:hover { transform: scale(1.04); box-shadow: 0 3px 8px rgba(16, 24, 40, 0.25); }
   .thumb-cell img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  /* Small corner badge, not a full-cell overlay -- a centered dark tint +
+     30px circle was covering exactly the part of the thumbnail (a title
+     card's text, a performer's face) that matters most for reviewing
+     whether the thumbnail is even the right frame. */
   .thumb-cell .play-overlay {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: rgba(0, 0, 0, 0.18);
+    position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end;
+    padding: 4px; pointer-events: none;
   }
   .thumb-cell .play-icon {
-    width: 30px; height: 30px; border-radius: 50%; background: rgba(255, 255, 255, 0.94);
-    color: #111; display: flex; align-items: center; justify-content: center;
-    font-size: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    width: 18px; height: 18px; border-radius: 50%; background: rgba(0, 0, 0, 0.6);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); opacity: 0.8;
+    transition: opacity 0.12s ease, transform 0.12s ease;
   }
+  .thumb-cell:hover .play-icon { opacity: 1; transform: scale(1.2); }
   .thumb-cell.no-thumb { background: #2b2e33; }
-  .thumb-cell.no-thumb .play-overlay { background: transparent; }
+  .thumb-cell.no-thumb .play-overlay { align-items: center; justify-content: center; padding: 0; }
   .thumb-cell.no-thumb .play-icon {
     width: auto; height: auto; border-radius: 4px; background: rgba(255, 255, 255, 0.12);
     color: #ccc; padding: 4px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    opacity: 1;
   }
   .inline-video {
     display: block; max-width: 480px; max-height: 320px; border-radius: 8px;

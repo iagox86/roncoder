@@ -84,14 +84,17 @@ def do_thumbnail(config, base_filename, thumbnail)
 
   puts "Resizing thumbnail #{ thumbnail }...".green
 
+  # Array-form system() (no shell) -- see roncoder.rb's do_thumbnail for why:
+  # a filename with a shell metacharacter (e.g. "$") silently corrupted the
+  # output filename when this was a single interpolated command string.
   thumbnail_file = "#{ base_filename }.jpg"
-  system("magick \"#{ thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ thumbnail_file }\"")
+  system('magick', thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], thumbnail_file)
 
   fanart_file = "#{ base_filename }-fanart.jpg"
-  system("magick \"#{ thumbnail }\" -resize #{ config['thumbnail_fanart_size'] } -background none -gravity center -extent #{ config['thumbnail_fanart_size'] } \"#{ fanart_file }\"")
+  system('magick', thumbnail, '-resize', config['thumbnail_fanart_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_fanart_size'], fanart_file)
 
   logo_file = "#{ base_filename }-logo.jpg"
-  system("magick \"#{ thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ logo_file }\"")
+  system('magick', thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], logo_file)
 end
 
 def do_nfo(config, base_filename)

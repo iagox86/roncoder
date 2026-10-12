@@ -442,7 +442,7 @@ def do_thumbnail(config, base_filename, video_file)
     tempfile = Tempfile.create(['thumbnail', '.jpg'])
     tempfile.close
 
-    system("ffmpeg -y -ss #{ config['thumbnail_offset'] } -i \"#{ video_file }\" -frames:v 1 -q:v 2 \"#{ tempfile.to_path }\"")
+    system('ffmpeg', '-y', '-ss', config['thumbnail_offset'].to_s, '-i', video_file, '-frames:v', '1', '-q:v', '2', tempfile.to_path)
     base_thumbnail = tempfile.to_path
   elsif config['manual_thumbnail']
     log("Using manual thumbnail: #{ config['manual_thumbnail'] }")
@@ -458,14 +458,22 @@ def do_thumbnail(config, base_filename, video_file)
 
   log("Resizing thumbnail into #{ CONFIG['out_dir'] }")
 
+  # Array-form system() (no shell) -- a single interpolated command string
+  # here silently corrupted any title containing a shell metacharacter (a
+  # real chapter titled "Copy Ca$h" lost everything from the "$" onward in
+  # its thumbnail/fanart/logo filenames, because "$h)" got shell-expanded
+  # as an unset variable inside the double-quoted destination path -- the
+  # .mp4/.nfo were unaffected since those are written via FileUtils/File.write,
+  # not system()). sanitize_filename doesn't (and shouldn't) strip $/`/;/etc,
+  # since those are all filesystem-safe; only a shell string was the problem.
   thumbnail_file = File.join(CONFIG['out_dir'], "#{ base_filename }.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ thumbnail_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], thumbnail_file)
 
   fanart_file = File.join(CONFIG['out_dir'], "#{ base_filename }-fanart.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_fanart_size'] } -background none -gravity center -extent #{ config['thumbnail_fanart_size'] } \"#{ fanart_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_fanart_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_fanart_size'], fanart_file)
 
   logo_file = File.join(CONFIG['out_dir'], "#{ base_filename }-logo.jpg")
-  system("magick \"#{ base_thumbnail }\" -resize #{ config['thumbnail_poster_size'] } -background none -gravity center -extent #{ config['thumbnail_poster_size'] } \"#{ logo_file }\"")
+  system('magick', base_thumbnail, '-resize', config['thumbnail_poster_size'], '-background', 'none', '-gravity', 'center', '-extent', config['thumbnail_poster_size'], logo_file)
 
   if tempfile
     File.unlink(tempfile)
